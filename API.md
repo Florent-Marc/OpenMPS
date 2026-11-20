@@ -14,7 +14,7 @@ php tools/api_token.php list
 php tools/api_token.php revoke TOKEN_ID
 ```
 
-The token is displayed once. The store contains a SHA-256 digest, label, scopes and revocation state. Default scopes are `read,publish`; a download-only token can use `create Players read`. `OPENMPS_API_TOKEN_FILE` optionally places the PHP token store outside the web root. Ensure CLI and web PHP use the same location, and that the web user can read it. Never commit the token store or put tokens into URLs. CLI token rotation and revocation do not change the game-facing access key.
+The token is displayed once. The store contains a SHA-256 digest, label, scopes and revocation state. Default scopes are `read,publish`; `recover` must be granted explicitly for editable originals. Create an editor token with `php tools/api_token.php create CPM read,publish,recover`. Existing tokens are not expanded automatically. a download-only token can use `create Players read`. `OPENMPS_API_TOKEN_FILE` optionally places the PHP token store outside the web root. Ensure CLI and web PHP use the same location, and that the web user can read it. Never commit the token store or put tokens into URLs. CLI token rotation and revocation do not change the game-facing access key.
 
 In CPM choose **Outils → OpenMPS…**, enter the site URL and token, and test the connection. Profiles persist the name and URL only; paste the token again after restarting CPM. Publish requires an explicit button press after the compatibility report. A new version is required for different content or publication options.
 
@@ -39,6 +39,7 @@ Endpoint: `<site-root>/api/v1.php`. All requests require `Authorization: Bearer 
 | GET `?action=packs` | read | `packs` array of pack keys, versions, ZIP sizes, file counts and available SHA-256 hashes |
 | POST `?action=publish` | publish | Raw ZIP body; publication receipt under `publication` |
 | GET `?action=client&pack_key=demo&pack_version=1.0` | read | Players ZIP, `X-OpenMPS-SHA256` and Content-Length |
+| GET `?action=source&pack_key=demo&pack_version=1.0` | recover | Editable configurations and original resources, SHA-256 and pack identity headers |
 
 Publish headers:
 
@@ -61,3 +62,9 @@ python3 tests/test_api.py
 ```
 
 Uses a temporary copy, temporary CLI-issued tokens and a real loopback PHP server, with no real account. Set `OPENMPS_TEST_PHP` and the JSON array `OPENMPS_TEST_PHP_ARGS` for an alternate PHP binary/extensions. Validated with PHP 8.4 plus OpenSSL/ZipArchive. Game loading itself requires a separate Minecraft/DynamX test.
+
+## Recovering editable originals
+
+Capabilities advertise `editable_download` and `recovery_allowed` for the authenticated token. The new `recover` scope is independent of game access keys and read-only players-ZIP downloads. The source endpoint prepares a private temporary ZIP from available original configurations/models/materials/textures/sounds, excluding generated MPS archives, descriptions and repository connection files. It validates portable paths, rejects links/special files and enforces 10,000 files, 128 MiB per file, 1 GiB uncompressed and 512 MiB ZIP limits. Temporary archives are removed after the request, including shutdown cleanup. It is never cached in a public pack directory.
+
+Only administrators explicitly granted recovery should receive a recover token: this endpoint returns complete original OBJ and other resources. If only encrypted `.part` models remain, it returns 422 `encrypted_originals`; missing original files cannot be reconstructed. The endpoint does not decrypt protected models. Minecraft/DynamX compatibility still requires an in-game check.

@@ -11,7 +11,7 @@ class ApiTests(unittest.TestCase):
         def token(label,scopes):
             output=subprocess.check_output([PHP,*PHP_ARGS,str(cls.site/'tools/api_token.php'),'create',label,scopes],env=cls.env,text=True)
             return re.search(r'Token ID: (\w+)',output)[1],re.search(r'Token \(shown once\): (omps_\S+)',output)[1]
-        cls.id,cls.token=token('integration','read,publish');cls.read_id,cls.read_token=token('reader','read')
+        cls.id,cls.token=token('integration','read,publish,recover');cls.read_id,cls.read_token=token('reader','read')
         with socket.socket() as s:s.bind(('127.0.0.1',0));cls.port=s.getsockname()[1]
         cls.url=f'http://127.0.0.1:{cls.port}/';cls.log=open(pathlib.Path(cls.temp.name)/'server.log','w+')
         cls.process=subprocess.Popen([PHP,*PHP_ARGS,'-S',f'127.0.0.1:{cls.port}','-t',str(cls.site),str(cls.site/'index.php')],env=cls.env,stdout=cls.log,stderr=cls.log)
@@ -83,6 +83,20 @@ class ApiTests(unittest.TestCase):
         with urllib.request.urlopen(self.url+f'get/1.3.0/paths/{version}/assets/paths/sub/../model.obj') as response:self.assertIn(b'v 1 0 0',response.read())
         with self.assertRaises(urllib.error.HTTPError) as caught:urllib.request.urlopen(self.url+f'get/1.3.0/paths/{version}/../../../config.php')
         self.assertEqual(caught.exception.code,400)
+    def test_editable_recovery_requires_its_scope_and_contains_original_resources(self):
+        code,result,_=self.publish('recoverable','1.0');self.assertEqual(code,200,result)
+        params='&pack_key=recoverable&pack_version=1.0'
+        self.assertEqual(self.request('source',params=params,auth=False)[0],401)
+        self.assertEqual(self.request('source',params=params,token=self.read_token)[0],403)
+        code,body,_=self.request('capabilities',token=self.read_token);self.assertFalse(json.loads(body)['recovery_allowed'])
+        code,body,headers=self.request('source',params=params);self.assertEqual(code,200,body);self.assertEqual(hashlib.sha256(body).hexdigest(),headers['X-OpenMPS-SHA256'])
+        self.assertEqual(headers['X-OpenMPS-Pack-Key'],'recoverable')
+        with zipfile.ZipFile(io.BytesIO(body)) as z:
+            self.assertIn('assets/recoverable/model.obj',z.namelist());self.assertIn('pack_info.dynx',z.namelist())
+            self.assertNotIn('MpsRepositories.json',z.namelist());self.assertFalse(any(n.endswith('.zip') or n.endswith('.desc') for n in z.namelist()))
+        root=self.site/'packs/recoverable/1.0';(root/'encrypted.part').write_bytes(b'encrypted')
+        self.assertEqual(self.request('source',params=params)[0],422);(root/'encrypted.part').unlink()
+        (root/'escape.obj').symlink_to(self.site/'config.php');self.assertEqual(self.request('source',params=params)[0],422)
     def test_token_revocation_and_private_state(self):
         output=subprocess.check_output([PHP,*PHP_ARGS,str(self.site/'tools/api_token.php'),'create','revocable','read'],env=self.env,text=True)
         token=re.search(r'Token \(shown once\): (omps_\S+)',output)[1];id=re.search(r'Token ID: (\w+)',output)[1]

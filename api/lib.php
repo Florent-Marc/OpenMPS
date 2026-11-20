@@ -147,11 +147,43 @@ function mps_api_json(array $data, int $status = 200): void {
     http_response_code($status); header('Content-Type: application/json; charset=utf-8'); header('Cache-Control: no-store'); header('X-Content-Type-Options: nosniff');
     echo json_encode($data, JSON_UNESCAPED_SLASHES); exit;
 }
+// Editable copies contain available original resources, never credentials or generated MPS archives.
+function mps_api_build_source(string $key, string $version, string $archive): void {
+    $root = MPS_PACKS_DIR . '/' . $key . '/' . $version;
+    if (!is_dir($root) || is_link($root) || is_link(dirname($root))) mps_api_fail(404, 'not_found', 'Pack originals not found.');
+    if (!is_file($root . '/pack_info.dynx')) mps_api_fail(422, 'originals_missing', 'The server does not contain an editable pack_info.dynx.');
+    $zip = new ZipArchive();
+    if ($zip->open($archive, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) mps_api_fail(500, 'source_archive', 'Cannot prepare editable archive.');
+    try {
+        $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS));
+        $seen = []; $total = 0; $count = 0;
+        foreach ($iterator as $file) {
+            $relative = str_replace(DIRECTORY_SEPARATOR, '/', substr($file->getPathname(), strlen($root) + 1));
+            if ($file->isLink() || !$file->isFile()) mps_api_fail(422, 'unsafe_source', 'Pack originals contain a link or special file.');
+            if (preg_match('#(?:^|/)\.[^/]+#', $relative)) continue;
+            if (preg_match('/\.part$/i', $relative)) mps_api_fail(422, 'encrypted_originals', 'Only encrypted model files remain; an editable copy cannot be reconstructed.');
+            if (preg_match('/\.(zip|dnxpack|desc)$/i', $relative) || in_array($relative, ['MpsRepositories.json', 'MpsRepositories.json.example', 'README_INSTALLATION.txt'], true)) continue;
+            $name = mps_api_safe_path($relative);
+            $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+            if (!in_array($ext, ['dynx','obj','mtl','png','jpg','jpeg','tga','bmp','gif','webp','gltf','glb','bin','ogg','wav','dc','json','lang','txt','properties','md'], true) && !in_array(strtolower(basename($name)), ['license','readme'], true)) mps_api_fail(422, 'unsupported_original', 'Unsupported original file: ' . $name);
+            if (isset($seen[strtolower($name)])) mps_api_fail(422, 'duplicate_path', 'Pack originals contain duplicate paths.');
+            $seen[strtolower($name)] = true;
+            $size = $file->getSize(); $total += $size; $count++;
+            if ($size > 134217728 || $total > 1073741824 || $count > 10000) mps_api_fail(422, 'source_limit', 'Pack originals exceed recovery limits.');
+            if (!$zip->addFile($file->getPathname(), $name)) mps_api_fail(500, 'source_archive', 'Cannot archive an original file.');
+        }
+        if (!$zip->close()) mps_api_fail(500, 'source_archive', 'Cannot finish editable archive.');
+        $zip = null;
+        clearstatcache(true, $archive);
+        if (filesize($archive) > 536870912) mps_api_fail(413, 'source_limit', 'Editable ZIP exceeds 512 MiB.');
+    } finally { if ($zip !== null) $zip->close(); }
+}
+
 function mps_api_run(): void {
     $temp = null;
     try {
         $action = $_GET['action'] ?? 'capabilities'; $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-        mps_api_auth($action === 'publish' ? 'publish' : 'read');
+        $auth = mps_api_auth($action === 'publish' ? 'publish' : ($action === 'source' ? 'recover' : 'read'));
         if ($action === 'publish' && $method === 'POST') {
             $length = (int)($_SERVER['CONTENT_LENGTH'] ?? 0);
             if ($length <= 0 || $length > mps_api_max_upload()) mps_api_fail(413, 'upload_limit', 'Missing length or upload exceeds the server limit.');
@@ -163,10 +195,29 @@ function mps_api_run(): void {
             unlink($temp); $temp=null; mps_api_json(['success'=>true,'publication'=>$result]);
         }
         if ($method !== 'GET') mps_api_fail(405,'method','Use GET for reading or POST for publishing.');
-        if ($action === 'capabilities') mps_api_json(['success'=>true,'api_version'=>1,'protocol'=>'openmps-admin/1','mps_version'=>'1.3.0','public_url'=>mps_api_public_url(),'max_upload_bytes'=>mps_api_max_upload(),'immutable_versions'=>true]);
+        if ($action === 'capabilities') mps_api_json(['success'=>true,'api_version'=>1,'protocol'=>'openmps-admin/1','mps_version'=>'1.3.0','public_url'=>mps_api_public_url(),'max_upload_bytes'=>mps_api_max_upload(),'immutable_versions'=>true,'editable_download'=>true,'recovery_allowed'=>in_array('recover',$auth['scopes'],true)]);
         if ($action === 'packs') {
             $packs=[];foreach(mps_get_all_packs() as $pack){$meta=mps_api_metadata($pack['key'],$pack['version']);$packs[]=['pack_key'=>$pack['key'],'pack_version'=>$pack['version'],'client_size'=>$pack['client_zip_size'],'client_sha256'=>$meta['client_sha256']??null,'files_count'=>$pack['files_count']];}
             mps_api_json(['success'=>true,'packs'=>$packs]);
+        }
+        if ($action === 'source') {
+            $key = mps_api_key($_GET['pack_key'] ?? '');
+            $version = mps_api_version($_GET['pack_version'] ?? '');
+            $temp = tempnam(sys_get_temp_dir(), 'openmps-source-');
+            $cleanupSource = $temp;
+            register_shutdown_function(function () use ($cleanupSource) { if (is_file($cleanupSource)) unlink($cleanupSource); });
+            mps_api_build_source($key, $version, $temp);
+            header('Content-Type: application/zip');
+            header('Cache-Control: no-store');
+            header('X-Content-Type-Options: nosniff');
+            header('Content-Disposition: attachment; filename="source-' . $key . '-' . $version . '.zip"');
+            header('Content-Length: ' . filesize($temp));
+            header('X-OpenMPS-SHA256: ' . hash_file('sha256', $temp));
+            header('X-OpenMPS-Pack-Key: ' . $key);
+            header('X-OpenMPS-Pack-Version: ' . $version);
+            readfile($temp);
+            unlink($temp);
+            exit;
         }
         if ($action === 'client') {
             $key=mps_api_key($_GET['pack_key']??'');$version=mps_api_version($_GET['pack_version']??'');$file=MPS_PACKS_DIR.'/'.$key.'/'.$version.'/client-'.$key.'-'.$version.'.zip';
