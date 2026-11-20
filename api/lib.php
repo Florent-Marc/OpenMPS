@@ -195,7 +195,7 @@ function mps_api_run(): void {
             unlink($temp); $temp=null; mps_api_json(['success'=>true,'publication'=>$result]);
         }
         if ($method !== 'GET') mps_api_fail(405,'method','Use GET for reading or POST for publishing.');
-        if ($action === 'capabilities') mps_api_json(['success'=>true,'api_version'=>1,'protocol'=>'openmps-admin/1','mps_version'=>'1.3.0','public_url'=>mps_api_public_url(),'max_upload_bytes'=>mps_api_max_upload(),'immutable_versions'=>true,'editable_download'=>true,'recovery_allowed'=>in_array('recover',$auth['scopes'],true)]);
+        if ($action === 'capabilities') mps_api_json(['success'=>true,'api_version'=>1,'protocol'=>'openmps-admin/1','mps_version'=>'1.3.0','public_url'=>mps_api_public_url(),'max_upload_bytes'=>mps_api_max_upload(),'immutable_versions'=>true,'editable_download'=>true,'recovery_allowed'=>in_array('recover',$auth['scopes'],true),'scopes'=>$auth['scopes']]);
         if ($action === 'packs') {
             $packs=[];foreach(mps_get_all_packs() as $pack){$meta=mps_api_metadata($pack['key'],$pack['version']);$packs[]=['pack_key'=>$pack['key'],'pack_version'=>$pack['version'],'client_size'=>$pack['client_zip_size'],'client_sha256'=>$meta['client_sha256']??null,'files_count'=>$pack['files_count']];}
             mps_api_json(['success'=>true,'packs'=>$packs]);

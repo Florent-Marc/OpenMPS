@@ -45,7 +45,7 @@ class ApiTests(unittest.TestCase):
     def test_authentication_scopes_and_capabilities(self):
         self.assertEqual(self.request('capabilities',auth=False)[0],401)
         self.assertEqual(self.request('capabilities',token='omps_'+'x'*43)[0],401)
-        code,body,_=self.request('capabilities');self.assertEqual(code,200);data=json.loads(body);self.assertEqual(data['api_version'],1);self.assertEqual(data['public_url'],self.url);self.assertTrue(data['immutable_versions'])
+        code,body,_=self.request('capabilities');self.assertEqual(code,200);data=json.loads(body);self.assertEqual(data['api_version'],1);self.assertEqual(data['public_url'],self.url);self.assertTrue(data['immutable_versions']);self.assertEqual(set(data['scopes']),{'read','publish','recover'})
         self.assertEqual(self.publish('scopetest','1.0',token=self.read_token)[0],403)
     def test_publish_download_idempotency_and_game_resource_routes(self):
         body=self.archive('roundtrip','1.0');code,result,_=self.publish('roundtrip','1.0',body);self.assertEqual(code,200,result);receipt=json.loads(result)['publication']
@@ -88,7 +88,7 @@ class ApiTests(unittest.TestCase):
         params='&pack_key=recoverable&pack_version=1.0'
         self.assertEqual(self.request('source',params=params,auth=False)[0],401)
         self.assertEqual(self.request('source',params=params,token=self.read_token)[0],403)
-        code,body,_=self.request('capabilities',token=self.read_token);self.assertFalse(json.loads(body)['recovery_allowed'])
+        code,body,_=self.request('capabilities',token=self.read_token);self.assertFalse(json.loads(body)['recovery_allowed']);self.assertEqual(json.loads(body)['scopes'],['read'])
         code,body,headers=self.request('source',params=params);self.assertEqual(code,200,body);self.assertEqual(hashlib.sha256(body).hexdigest(),headers['X-OpenMPS-SHA256'])
         self.assertEqual(headers['X-OpenMPS-Pack-Key'],'recoverable')
         with zipfile.ZipFile(io.BytesIO(body)) as z:

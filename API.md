@@ -68,3 +68,7 @@ Uses a temporary copy, temporary CLI-issued tokens and a real loopback PHP serve
 Capabilities advertise `editable_download` and `recovery_allowed` for the authenticated token. The new `recover` scope is independent of game access keys and read-only players-ZIP downloads. The source endpoint prepares a private temporary ZIP from available original configurations/models/materials/textures/sounds, excluding generated MPS archives, descriptions and repository connection files. It validates portable paths, rejects links/special files and enforces 10,000 files, 128 MiB per file, 1 GiB uncompressed and 512 MiB ZIP limits. Temporary archives are removed after the request, including shutdown cleanup. It is never cached in a public pack directory.
 
 Only administrators explicitly granted recovery should receive a recover token: this endpoint returns complete original OBJ and other resources. If only encrypted `.part` models remain, it returns 422 `encrypted_originals`; missing original files cannot be reconstructed. The endpoint does not decrypt protected models. Minecraft/DynamX compatibility still requires an in-game check.
+
+### Affichage des droits dans les clients
+
+La réponse `capabilities` inclut `scopes`, la liste des droits du jeton courant (`read`, `publish`, `recover`). Un client peut afficher ces droits et désactiver les actions indisponibles. Le serveur continue de contrôler chaque requête ; cet affichage ne remplace pas son autorisation.
